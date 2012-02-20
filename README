@@ -1,0 +1,8 @@
+
+remoteids.py: fix/add remoteid tag in metadata.xml
+mirrors.py: check if a mirror could be used in SRC_URI
+
+Examples:
+
+$ eix -C dev-php --only-names | python mirrors.py
+$ python remoteids.py htop
