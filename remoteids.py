@@ -76,14 +76,6 @@ def mdiff(package, package_name, remote):
     after = after.replace('\'><pkgmetadata>', '\'>\n<pkgmetadata>')
     after = after.replace("  SYSTEM 'http://www.gentoo.org/dtd/metadata.dtd'",
                           ' SYSTEM "http://www.gentoo.org/dtd/metadata.dtd"')
-    print (after)
-    '''
-    <pkgmetadata>
-    <upstream>
-    <remote-id type="cpan">Test-Tester</remote-id>
-    </upstream>
-    </pkgmetadata>
-    '''
 
     n = metadata.find(package.category)
     if n != -1:
