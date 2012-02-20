@@ -21,6 +21,9 @@ patched_metadata = {}
 
 _pypi_package_name_re = re.compile("mirror://pypi/\w/([^/]*)/.+")
 _rubygems_package_name_re = re.compile("mirror://rubygems/(.*)\.gem")
+_rubyforge_package_name_re = re.compile("mirror://rubyforge/([^/]*)/.*")
+_googlecode_package_name_re = re.compile("http://(.*)\.googlecode.com/.*")
+_php_package_name_re = re.compile("http://(.*).php.net/get/(.*)-(.*).tgz")
 
 def pmsg(package, msg):
     print (pp.cpv(str(package)) + ": " + msg)
@@ -112,6 +115,25 @@ def rubygems_package_name(package, uri):
     # FIXME check using rubygems API
     return package_name
 
+## Rubyforge
+def rubyforge_package_name(package, uri):
+    match = _rubyforge_package_name_re.match(uri)
+    if not match:
+        sys.stderr.write(pp.warn("Can't find rubyforge package in '%s'" % uri))
+        return
+
+    package_name = match.group(1)
+    # FIXME check using rubyforge API
+    return package_name
+
+## Google code
+def google_package_name(package, uri):
+    match = _googlecode_package_name_re.search(uri)
+
+    if match:
+        return match.group(1)
+    else:
+        return None
 
 ## CPAN
 def cpan_package_name(package, uri):
@@ -119,7 +141,7 @@ def cpan_package_name(package, uri):
 
 ## PHP: Pear/Pecl
 def php_package_name(package, uri):
-    match = re.search('http://(.*).php.net/get/(.*)-(.*).tgz', uri)
+    match = _php_package_name_re.search(uri)
 
     if match:
         channel = match.group(1)
@@ -160,27 +182,25 @@ def remote_id(package, uri, rule):
     if not remoteid:
         missing_remote_id(package, package_name, remote)
 
-# TODO: handle these remote-id freshmeat|sourceforge|sourceforge-jp|cpan|vim|google-code|ctan|pypi|rubyforge|cran
-# TODO: fix other upstream elements ? maintainer|changelog|doc|bugs-to|remote-id
-
 URI_RULES = (
     # pypi
     (r'mirror://pypi/.*', 'pypi', pypi_package_name),
     # cpan
     (r'mirror://cpan/authors/.*', 'cpan', cpan_package_name),
-    # sourceforge
-    # sourceforge-jp
-    # cpan
-    # vim
     # google-code
-    # ctan
-    # pypi
+    (r'http://.*\.googlecode.com/.*', 'google-code', google_package_name),
     # rubyforge
-    # cran
+    (r'mirror://rubyforge/.*', 'rubyforge', rubyforge_package_name),
     # rubygems
     (r'mirror://rubygems/.*.gem', 'rubygems', rubygems_package_name),
     # pear / pecl
     (r'http://(pecl|pear).php.net/get/.*-.*.tgz', php_remote_id, None),
+    # FIXME
+    # ctan (using HOMEPAGE ?)
+    # cran
+    # sourceforge
+    # sourceforge-jp
+    # vim
 )
 
 def uri_rules(package, uri):
