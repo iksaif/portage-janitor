@@ -19,7 +19,9 @@ import helpers
 from pytrie import SortedStringTrie as trie
 
 mirrors = trie()
+
 generate_diff = False
+count_prefixes = False
 
 def pmsg(package, msg):
     print (pp.cpv(str(package)) + ": " + msg)
@@ -71,12 +73,60 @@ def check_uri(package, uri):
 
     bad_src_uri(package, uri, item[0], item[1])
 
-def upstream_remote_id_package(package):
+def add_package_prefix(package, count):
+    for filename, uris in helpers.get_package_uris(package).iteritems():
+        for uri in uris:
+            if not uri or '://' not in uri:
+                continue
+            if uri in count:
+                count[uri].update([package])
+            else:
+                count[uri] = set([package])
+
+def end_prefix_count(count):
+    import operator
+
+    result = {}
+
+    def split(uri):
+        parts = uri.split('/')
+
+        scheme, blank = parts.pop(0), parts.pop(0)
+        parts[0] = '%s//%s' % (scheme, parts[0])
+
+        parts.pop() # Skip file
+
+        prefix = parts.pop(0)
+        yield prefix
+
+        while parts:
+            prefix += '/' + parts.pop(0)
+            yield prefix
+
+    for uri in count.keys():
+        for part in split(uri):
+            if part in result:
+                result[part].update(count[uri])
+            else:
+                result[part] = set(count[uri])
+
+    sorted_uris = sorted(result.iteritems(), key=lambda x: len(x[1]), reverse=True)
+
+    i, limit = 0, 50
+    for uri, count in sorted_uris:
+        if uri.startswith('mirror://'):
+            continue
+        print ('%s\t%s' % (len(count), uri))
+        i += 1
+        if i >= limit:
+            break
+
+def check_package(package):
     for filename, uris in helpers.get_package_uris(package).iteritems():
         for uri in uris:
             check_uri(package, uri)
 
-def upstream_remote_id(query):
+def check_query(query, action):
     matches = Query(query).find(
         include_masked=True,
         in_installed=False
@@ -89,33 +139,47 @@ def upstream_remote_id(query):
     matches = sorted(matches)
 
     for package in matches:
-        upstream_remote_id_package(package)
+        action(package)
 
 def main():
-    # FIXME: use a real argument parser
-    if len(sys.argv) == 2 and sys.argv[1] in ['--help', '-h']:
-        print ("Usage: ")
-        print (" %s [--diff] --all" % sys.argv[0])
-        print (" %s [--diff] [pkg [pkg2 [...]]]" % sys.argv[0])
-        print (" eix --only-names -C dev-perl | %s" % sys.argv[0])
-        sys.exit(0)
+    import argparse
+    global generate_diff
 
-    if len(sys.argv) >= 2 and sys.argv[1] in ['--diff', '-d']:
-        global generate_diff
-        sys.argv.pop(1)
-        generate_diff = True
+    count = {}
 
-    build_mirrors()
+    parser = argparse.ArgumentParser(description='Cleanups SRC_URI using mirrors://')
+    parser.add_argument('packages', metavar='N', type=str, nargs='*',
+                        help='packages to check')
+    parser.add_argument('-a', '--all', action='store_true',
+                        help='check all packages')
+    parser.add_argument('-d', '--diff', action='store_true',
+                        help='generate ebuild diff (default: print package name and message)')
+    parser.add_argument('-c', '--count', action='store_true',
+                        help='generate a list of widely used URI prefix that should use a mirror:// instead')
 
-    if len(sys.argv) == 2 and sys.argv[1] in ['--all', '-a']:
+    args = parser.parse_args()
+
+    generate_diff = args.diff
+
+    if not args.count:
+        build_mirrors()
+        action = check_package
+    else:
+        action = lambda x: add_package_prefix(x, count)
+
+    if args.all:
         for package in get_cpvs():
-            upstream_remote_id_package(Package(package))
-    elif len(sys.argv) > 1:
-        for query in sys.argv[1:]:
-            upstream_remote_id(query)
+            action(Package(package))
+    elif args.packages:
+        for query in args.packages:
+            check_query(query, action)
     else:
         for package in sys.stdin.readlines():
-            upstream_remote_id(package.replace('\n', ''))
+            check_query(package.replace('\n', ''), action)
+
+    if args.count:
+        end_prefix_count(count)
+
 
 if __name__ == '__main__':
     main()
