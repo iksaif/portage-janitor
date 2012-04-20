@@ -22,6 +22,8 @@ from xml.dom.minidom import parse, parseString, Document
 
 import copy
 import helpers
+import urllib2
+import json
 
 _generate_diff = False
 _patched_metadata = {}
@@ -54,6 +56,10 @@ _php_package_name_re = [
     re.compile("http://(.*).php.net/([^/]*)"),
 ]
 
+_cpan_package_name_re = [
+    re.compile("mirror://cpan/authors/.*/([^/.]*).*"),
+]
+
 _ctan_package_name_re = [
     re.compile("http://www.ctan.org/pkg/([^/]*).*"),
     re.compile("http://www.ctan.org/tex-archive/macros/latex/contrib/([^/]*).*")
@@ -80,22 +86,14 @@ _gitorious_package_name_re = [
 _github_package_name_re = [
     (re.compile(r'https?://github.com/(downloads/)?[^/]*/([^/]*).*'), 2),
 ]
-"""
-https://bitbucket.org/pypy/pypy/get/release-
-http://www.bitbucket.org/ubernostrum/django-registration/wiki/
 
-http://gitorious.org/enca
-https://gitorious.org/gusb/
-http://www.gitorious.org/grantlee/pages/Home
+def download_data(url):
+    try:
+        return urllib2.urlopen(url).read()
+    except Exception as err:
+        print (err)
+        return False
 
-https://github.com/downloads/${PN}/${PN}/${MYP}.tar.gz
-https://github.com/downloads/divVerent/d0_blind_id/
-https://github.com/SimonSapin/Frozen-Flask
-http://github.com/djblets
-http://roban.github.com/CosmoloPy/
-http://github.com/yoriyuki/Camomile/wiki
-http://lloyd.github.com/yajl/
-"""
 def re_find_package_name(package, regexps, uri):
     if not isinstance(regexps, (list, tuple)):
         regexps = ( (regexps, 1), )
@@ -236,7 +234,38 @@ def google_package_name(package, uri):
 
 ## CPAN
 def cpan_package_name(package, uri):
-    return package.name # FIXME: guess package name from URI
+    package_name = re_find_package_name(package, _cpan_package_name_re, uri)
+    if not package_name:
+        package_name = package.name
+    cpan_module = None
+
+    tries = [ package_name ]
+    if '-' in package_name:
+        tries.append(package_name.replace('-', '::'))
+
+    for module in tries:
+        data = download_data('http://search.cpan.org/api/module/%s' % module)
+        try:
+            data = json.loads(data)
+        except:
+            continue
+        if 'distvname' in data and data['distvname'].startswith(package_name):
+            cpan_module = module
+            break
+
+    return package_name, cpan_module
+
+def cpan_remote_id(package, uri, rulte):
+    package_name, cpan_module = cpan_package_name(package, uri)
+    if not package_name:
+        return
+
+    if not find_remote_id(package, 'cpan'):
+        missing_remote_id(package, package_name, 'cpan')
+
+    # CPAN module is optional
+    if cpan_module and not find_remote_id(package, 'cpan-module'):
+        missing_remote_id(package, cpan_module, 'cpan-module')
 
 ## PHP: Pear/Pecl
 def php_package_name(package, uri):
@@ -311,7 +340,8 @@ URI_RULES = (
     (r'mirror://pypi/.*', 'pypi', pypi_package_name),
     (r'http://pypi\.python\.org/pypi/.*', 'pypi', pypi_package_name),
     # cpan
-    (r'mirror://cpan/authors/.*', 'cpan', cpan_package_name),
+    #(r'mirror://cpan/authors/.*', 'cpan', cpan_package_name),
+    (r'mirror://cpan/authors/.*',  cpan_remote_id, ''),
     # google-code
     (r'http://.*\.googlecode\.com/.*', 'google-code', google_package_name),
     (r'http://code\.google\.com/p/.*', 'google-code', google_package_name),
