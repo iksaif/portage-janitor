@@ -91,7 +91,6 @@ def download_data(url):
     try:
         return urllib2.urlopen(url).read()
     except Exception as err:
-        print (err)
         return False
 
 def re_find_package_name(package, regexps, uri):
