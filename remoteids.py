@@ -28,7 +28,7 @@ import json
 _generate_diff = False
 _patched_metadata = {}
 _accepted_types = []
-_only_latest = False
+_remotes_id = {}
 
 _pypi_package_name_re = [
     re.compile("mirror://pypi/\w/([^/]*)/.+"),
@@ -87,9 +87,9 @@ _github_package_name_re = [
     (re.compile(r'https?://github.com/(downloads/)?[^/]*/([^/]*).*'), 2),
 ]
 
-def download_data(url):
+def download_data(url, data=None):
     try:
-        return urllib2.urlopen(url).read()
+        return urllib2.urlopen(url, data).read()
     except Exception as err:
         return False
 
@@ -163,12 +163,24 @@ def lock(key, val):
     _patched_metadata[key].append(val)
 
 
-def mdiff(package, package_name, remote):
-    metadata = package.package_path() + '/metadata.xml'
+def add_remote_id_tag(data, remote_type, remote_id, indent, rindent):
+    remote_tag = '%s<remote-id type="%s">%s</remote-id>' % \
+        (indent, remote_type, remote_id)
 
-    if is_locked(metadata, remote):
+    if '<upstream>' in data:
+        data = data.replace('<upstream>', '<upstream>\n%s' % remote_tag, 1)
+    else:
+        rep = '%s<upstream>\n%s\n%s</upstream>\n</pkgmetadata>' % \
+            (rindent, remote_tag, rindent)
+        data = data.replace('</pkgmetadata>', rep, 1)
+    return data
+
+def output_diff(package):
+    if package.cp not in _remotes_id:
         return
-    lock(metadata, remote)
+
+    remote_ids = _remotes_id[package.cp]
+    metadata = package.package_path() + '/metadata.xml'
 
     before = open(metadata).read()
     before = before.decode('utf8')
@@ -177,13 +189,9 @@ def mdiff(package, package_name, remote):
     # Find root-indent and child-indent values
     rindent, indent = guess_indent_values(before)
 
-    remote_tag = '%s<remote-id type="%s">%s</remote-id>' % (indent, remote, package_name)
-
-    if '<upstream>' in after:
-        after = after.replace('<upstream>', '<upstream>\n%s' % remote_tag, 1)
-    else:
-        rep = '%s<upstream>\n%s\n%s</upstream>\n</pkgmetadata>' % (rindent, remote_tag, rindent)
-        after = after.replace('</pkgmetadata>', rep, 1)
+    for remote_type in remote_ids.keys():
+        for remote_id in remote_ids[remote_type]:
+            after = add_remote_id_tag(after, remote_type, remote_id, indent, rindent)
 
     # Generate clean a/category/package/metadata.xml path
     n = metadata.find(package.category)
@@ -196,26 +204,31 @@ def mdiff(package, package_name, remote):
     for line in diff:
         sys.stdout.write(line.encode('utf8'))
 
-def missing_remote_id(package, package_name, remote):
+def missing_remote_id(package, remote_id, remote_type, force=False):
     # Ignore types not defined in dtd
-    if _accepted_types and remote not in _accepted_types:
+    if _accepted_types and remote_type not in _accepted_types:
         return
 
-    if not _generate_diff:
-        if is_locked(package.cp, remote):
-            return
-        lock(package.cp, remote)
-        msg = 'missing remote id: <upstream><remote-id type="%s">%s</remote-id></upstream>' % (remote, package_name)
-        pmsg(package, msg)
-    else:
-        mdiff(package, package_name, remote)
+    if package.cp not in _remotes_id:
+        _remotes_id[package.cp] = {}
+    if remote_type not in _remotes_id[package.cp]:
+        _remotes_id[package.cp][remote_type] = []
+    if remote_id not in _remotes_id[package.cp][remote_type]:
+        _remotes_id[package.cp][remote_type].append(remote_id)
+
+        if not _generate_diff:
+            msg = 'missing remote id: '
+            msg += '<upstream><remote-id type="%s">%s</remote-id></upstream>' \
+                % (remote, remote_id)
+            pmsg(package, msg)
 
 def find_remote_id(package, remote):
+    matches = []
     for upstream in package.metadata.upstream():
         for remoteid in upstream.upstream_remoteids():
             if remoteid[1] == remote:
-                return remoteid
-    return None
+                matches.append(remoteid[0])
+    return matches
 
 ## Rubygems
 def rubygems_package_name(package, uri):
@@ -236,35 +249,48 @@ def cpan_package_name(package, uri):
     package_name = re_find_package_name(package, _cpan_package_name_re, uri)
     if not package_name:
         package_name = package.name
-    cpan_module = None
+    cpan_modules = []
 
-    tries = [ package_name ]
-    if '-' in package_name:
-        tries.append(package_name.replace('-', '::'))
+    data = {
+        "fields" : [ "module.name", "release" ],
+        "query" : { "constant_score" : { "filter" : { "and" : [
+        { "term": { "distribution": package_name } },
+        { "term": { "status" : "latest" } },
+        { "term": { "mime" : "text/x-script.perl-module" } },
+        { "term": { "indexed" : "true" } },
+        { "term": { "module.authorized" : "true" } } ] } } }
+    }
+    data = download_data('http://api.metacpan.org/module/_search', json.dumps(data))
+    try:
+        data = json.loads(data)
+    except:
+        return package_name, []
 
-    for module in tries:
-        data = download_data('http://search.cpan.org/api/module/%s' % module)
-        try:
-            data = json.loads(data)
-        except:
-            continue
-        if 'distvname' in data and data['distvname'].startswith(package_name):
-            cpan_module = module
-            break
+    if 'hits' in data:
+        for hit in data['hits']['hits']:
+            if hit['_score'] != 1:
+                continue
 
-    return package_name, cpan_module
+            module_name = hit['fields']['module.name']
+            if type(module_name) == list:
+                cpan_modules.extend(module_name)
+            else:
+                cpan_modules.append(module_name)
+
+    return package_name, cpan_modules
 
 def cpan_remote_id(package, uri, rulte):
-    package_name, cpan_module = cpan_package_name(package, uri)
+    package_name, cpan_modules = cpan_package_name(package, uri)
     if not package_name:
         return
 
     if not find_remote_id(package, 'cpan'):
         missing_remote_id(package, package_name, 'cpan')
 
-    # CPAN module is optional
-    if cpan_module and not find_remote_id(package, 'cpan-module'):
-        missing_remote_id(package, cpan_module, 'cpan-module')
+    modules = find_remote_id(package, 'cpan-module')
+    for module in cpan_modules:
+        if module not in modules:
+            missing_remote_id(package, module, 'cpan-module', True)
 
 ## PHP: Pear/Pecl
 def php_package_name(package, uri):
@@ -390,6 +416,9 @@ def upstream_remote_id_package(package):
     for homepage in package.environment('HOMEPAGE').split():
         uri_rules(package, homepage)
 
+    if _generate_diff:
+        output_diff(package)
+
 def upstream_remote_id(query):
     matches = Query(query).find(
         include_masked=True,
@@ -402,8 +431,8 @@ def upstream_remote_id(query):
 
     matches = sorted(matches)
     matches.reverse()
-    if _only_latest:
-        matches = matches[:1]
+    # Only latest version
+    matches = matches[:1]
     for package in matches:
         upstream_remote_id_package(package)
 
@@ -436,10 +465,6 @@ def main():
         global _accepted_types
         sys.argv.remove('--vanilla')
         _accepted_types = types_from_dtd()
-    if '--latest' in sys.argv:
-        global _only_latest
-        sys.argv.remove('--latest')
-        _only_latest = True
 
     if len(sys.argv) >= 2 and sys.argv[1] in ['--diff', '-d']:
         global _generate_diff
