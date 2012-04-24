@@ -18,20 +18,22 @@ import gentoolkit.pprinter as pp
 import helpers
 from pytrie import SortedStringTrie as trie
 
-mirrors = trie()
-
-generate_diff = False
-count_prefixes = False
+_mirrors = trie()
+_generate_diff = False
+_thirdpartymirrors = []
 
 def pmsg(package, msg):
     print (pp.cpv(str(package)) + ": " + msg)
 
-def ediff(package, uri, prefix, mirror):
+def generate_diff(package, bad_uris):
     from difflib import unified_diff
 
     ebuild = package.ebuild_path()
     before = open(ebuild).read()
-    after = before.replace(prefix, mirror)
+    after = before
+
+    for old, new in bad_uris:
+        after = after.replace(old, new)
 
     n = ebuild.find(package.category)
     if n != -1:
@@ -48,30 +50,41 @@ def bad_src_uri(package, uri, prefix, mirror):
     if prefix.endswith('/'):
         mirror += '/'
 
-    if not generate_diff:
+    if not _generate_diff:
         uri = uri.replace(prefix, mirror)
         pmsg(package, 'SRC_URI should be %s' % uri)
-    else:
-        ediff(package, uri, prefix, mirror)
+
+    return (prefix, mirror)
 
 def build_mirrors():
-    global mirrors
+    from portage.util import stack_dictlist, grabdict
+
+    global _mirrors
 
     tmp = {}
-    for k, v in portage.settings.thirdpartymirrors().iteritems():
-        for mirror in v:
-            tmp[mirror] = k
-    mirrors = trie(tmp)
+    thirdpartymirrors = {}
+
+    if not _thirdpartymirrors:
+        thirdpartymirrors = portage.settings.thirdpartymirrors()
+    else:
+        thirdparty_lists = [grabdict(x) for x in _thirdpartymirrors]
+        thirdpartymirrors = portage.util.stack_dictlist(thirdparty_lists, incremental=True)
+
+    for prefix, mirrors in thirdpartymirrors.iteritems():
+        for mirror in mirrors:
+            tmp[mirror] = prefix
+
+    _mirrors = trie(tmp)
 
 def check_uri(package, uri):
-    global mirrors
+    global _mirrors
 
     try:
-        item = mirrors.longest_prefix_item(uri)
+        item = _mirrors.longest_prefix_item(uri)
     except KeyError:
-        return
+        return None
 
-    bad_src_uri(package, uri, item[0], item[1])
+    return bad_src_uri(package, uri, item[0], item[1])
 
 def add_package_prefix(package, count):
     for filename, uris in helpers.get_package_uris(package).iteritems():
@@ -122,9 +135,16 @@ def end_prefix_count(count):
             break
 
 def check_package(package):
+    bad_uris = []
+
     for filename, uris in helpers.get_package_uris(package).iteritems():
         for uri in uris:
-            check_uri(package, uri)
+            ret = check_uri(package, uri)
+            if ret and ret not in bad_uris:
+                bad_uris.append(ret)
+
+    if _generate_diff and bad_uris:
+        generate_diff(package, bad_uris)
 
 def check_query(query, action):
     matches = Query(query).find(
@@ -143,7 +163,7 @@ def check_query(query, action):
 
 def main():
     import argparse
-    global generate_diff
+    global _generate_diff, _thirdpartymirrors
 
     count = {}
 
@@ -156,10 +176,13 @@ def main():
                         help='generate ebuild diff (default: print package name and message)')
     parser.add_argument('-c', '--count', action='store_true',
                         help='generate a list of widely used URI prefix that should use a mirror:// instead')
+    parser.add_argument('-m', '--thirdpartymirrors', action='append',
+                        help='use this thirdpartymirrors file')
 
     args = parser.parse_args()
 
-    generate_diff = args.diff
+    _generate_diff = args.diff
+    _thirdpartymirrors = args.thirdpartymirrors
 
     if not args.count:
         build_mirrors()

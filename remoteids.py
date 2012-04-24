@@ -219,7 +219,7 @@ def missing_remote_id(package, remote_id, remote_type, force=False):
         if not _generate_diff:
             msg = 'missing remote id: '
             msg += '<upstream><remote-id type="%s">%s</remote-id></upstream>' \
-                % (remote, remote_id)
+                % (remote_type, remote_id)
             pmsg(package, msg)
 
 def find_remote_id(package, remote):
