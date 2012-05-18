@@ -258,7 +258,8 @@ def cpan_package_name(package, uri):
         { "term": { "status" : "latest" } },
         { "term": { "mime" : "text/x-script.perl-module" } },
         { "term": { "indexed" : "true" } },
-        { "term": { "module.authorized" : "true" } } ] } } }
+        { "term": { "module.authorized" : "true" } } ] } } },
+        "size" : 100
     }
     data = download_data('http://api.metacpan.org/module/_search', json.dumps(data))
     try:
