@@ -22,6 +22,8 @@ _mirrors = trie()
 _generate_diff = False
 _thirdpartymirrors = []
 
+_src_uri_re = re.compile('SRC_URI=([\'"])(.*?)\\1', re.S)
+
 def pmsg(package, msg):
     print (pp.cpv(str(package)) + ": " + msg)
 
@@ -32,8 +34,25 @@ def generate_diff(package, bad_uris):
     before = open(ebuild).read()
     after = before
 
-    for old, new in bad_uris:
-        after = after.replace(old, new)
+    #print (after)
+
+    for matches in _src_uri_re.findall(after):
+        src_uri_before = matches[1]
+        src_uri_after = src_uri_before
+
+        # Guess indentation
+        indent = '\t'
+        for i in range(4):
+            if indent + '\t' in src_uri_before: indent += '\t'
+
+        # Replace URIs
+        for old, new in bad_uris:
+            src_uri_after = src_uri_after.replace(old, new)
+
+        # Uniquify
+        uris = set([ x.strip('\t') for x in src_uri_after.split('\n') ])
+        src_uri_after = ("\n" + indent).join(uris)
+        after = after.replace(src_uri_before, src_uri_after)
 
     n = ebuild.find(package.category)
     if n != -1:
