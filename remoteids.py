@@ -453,30 +453,38 @@ def types_from_dtd():
     return attr.get_type()
 
 def main():
-    # FIXME: Use a real parser !
+    import argparse
+    global _generate_diff, _thirdpartymirrors
 
-    if len(sys.argv) == 2 and sys.argv[1] in ['--help', '-h']:
-        print ("Usage: ")
-        print (" %s [--diff] --all" % sys.argv[0])
-        print (" %s [--diff] [pkg [pkg2 [...]]]" % sys.argv[0])
-        print (" eix --only-names -C dev-perl | %s" % sys.argv[0])
-        sys.exit(0)
+    count = {}
 
-    if '--vanilla' in sys.argv:
+    parser = argparse.ArgumentParser(description='Cleanups SRC_URI using mirrors://')
+    parser.add_argument('packages', metavar='N', type=str, nargs='*',
+                        help='packages to check')
+    parser.add_argument('-a', '--all', action='store_true',
+                        help='check all packages')
+    parser.add_argument('-d', '--diff', action='store_true',
+                        help='generate ebuild diff (default: print package name and message)')
+    parser.add_argument('-v', '--vanilla', action='store_true',
+                        help='Use only Vanilla remote ids defined in current /usr/portage/metadata/dtd/metadata.dtd')
+    parser.add_argument('-m', '--thirdpartymirrors', action='append',
+                        help='use this thirdpartymirrors file')
+
+    args = parser.parse_args()
+
+    if args.vanilla in sys.argv:
         global _accepted_types
-        sys.argv.remove('--vanilla')
         _accepted_types = types_from_dtd()
 
-    if len(sys.argv) >= 2 and sys.argv[1] in ['--diff', '-d']:
+    if args.diff:
         global _generate_diff
-        sys.argv.pop(1)
         _generate_diff = True
 
-    if len(sys.argv) == 2 and sys.argv[1] in ['--all', '-a']:
+    if args.all:
         for package in get_cpvs():
             upstream_remote_id_package(Package(package))
-    elif len(sys.argv) > 1:
-        for query in sys.argv[1:]:
+    elif args.packages:
+        for query in args.packages:
             upstream_remote_id(query)
     else:
         for package in sys.stdin.readlines():
