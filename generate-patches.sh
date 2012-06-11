@@ -32,9 +32,10 @@ run_in_dir() {
 PATH=$(pwd):$PATH
 PWD=$(pwd)
 
+run_in_dir remoteids remoteids.py --diff --check
+
 run_in_dir mirrors mirrors.py --diff
 run_in_dir mirrors-fix mirrors.py --diff -m ${PWD}/thirdpartymirrors-fix
 run_in_dir mirrors-extended mirrors.py --diff -m ${PWD}/thirdpartymirrors-extended -m ${PWD}/thirdpartymirrors-fix-extended
 run_in_dir mirrors-full mirrors.py --diff -m ${PWD}/thirdpartymirrors-extended -m ${PWD}/thirdpartymirrors-fix-extended -m ${PWD}/thirdpartymirrors-fix -m /usr/portage/profiles/thirdpartymirrors
-run_in_dir remoteids remoteids.py --diff
 
