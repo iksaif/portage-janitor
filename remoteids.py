@@ -69,7 +69,7 @@ _cran_package_name_re = [
 ]
 
 _sourceforge_package_name_re = [
-    (re.compile("https?://(.*)\.(sf|sourceforge)\.net"), 1),
+    (re.compile("https?://([^.]+)(.*)\.(sf|sourceforge)\.net"), 1),
     (re.compile("https?://(.*\.)?(sf|sourceforge)\.net/projects/([^/]*).*"), 3),
 ]
 
@@ -296,7 +296,8 @@ def rubyforge_package_name(package, uri):
 
 ## Google code
 def google_package_name(package, uri):
-    return re_find_package_name(package, _googlecode_package_name_re, uri)
+    package_name = re_find_package_name(package, _googlecode_package_name_re, uri)
+    return package_name.lower()
 
 ## CPAN
 def cpan_modules_from_dist(package, dist):
@@ -389,7 +390,10 @@ def cran_package_name(package, uri):
 
 ## Sourceforge
 def sourceforge_package_name(package, uri):
-    return re_find_package_name(package, _sourceforge_package_name_re, uri)
+    package_name = re_find_package_name(package, _sourceforge_package_name_re, uri)
+    if package_name in ['downloads', 'apps', 'www', 'prdownloads', 'download']:
+        return None
+    return package_name.lower()
 
 ## Github
 def github_package_name(package, uri):
@@ -486,7 +490,7 @@ CHECK_REMOTE_ID = {
 #    'cran' :         check_cran
     'github' :       check_url_fn('http://github.com/api/v2/json/repos/show/%s'),
     'gitorious' :    check_url_fn('https://gitorious.org/%s.xml'),
-    'googlecode' :   check_url_fn('http://code.google.com/p/%s'),
+    'google-code' :   check_url_fn('http://code.google.com/p/%s'),
     'pear' :         check_pear,
     'pecl' :         check_pecl,
     'pypi' :         check_url_fn('http://pypi.python.org/pypi/%s'),
@@ -514,12 +518,17 @@ def upstream_remote_id_package(package):
     for homepage in package.environment('HOMEPAGE').split():
         uri_rules(package, homepage)
 
+    to_check = set()
     if _options.check:
-        to_check = package._remoteids.difference(package._remoteids_found)
-        for remote_type, remote_id in to_check:
-            if remote_type in CHECK_REMOTE_ID:
-                if not CHECK_REMOTE_ID[remote_type](package, remote_id):
-                    bad_remote_id(package, remote_id, remote_type)
+        to_check = to_check.union(package._remoteids.difference(package._remoteids_found))
+    if _options.check_all:
+        to_check = to_check.union(package._remoteids)
+        to_check = to_check.union(package._remoteids_found)
+
+    for remote_type, remote_id in to_check:
+        if remote_type in CHECK_REMOTE_ID:
+            if not CHECK_REMOTE_ID[remote_type](package, remote_id):
+                bad_remote_id(package, remote_id, remote_type)
 
     if _options.diff:
         output_diff(package)
@@ -575,6 +584,8 @@ def main():
                         help='If a remote id is found with the same type, preserve the existing remote id')
     parser.add_argument('-C', '--check', action='store_true',
                         help='Also check if existing tags are valid')
+    parser.add_argument('-c', '--check-all', action='store_true',
+                        help='Also check if all tags are valid (existing and generated)')
 
     args = parser.parse_args()
     _options = args
