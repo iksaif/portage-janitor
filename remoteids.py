@@ -65,7 +65,6 @@ _ctan_package_name_re = [
 
 _cran_package_name_re = [
     re.compile("http://cran\.r-project\.org/web/packages/([^/]*).*"),
-    re.compile("http://(.*)\.r-project\.org/.*"),
 ]
 
 _sourceforge_package_name_re = [
@@ -89,7 +88,15 @@ def download_data(url, data=None):
     try:
         return urllib2.urlopen(url, data).read()
     except Exception as err:
+        if _options.verbose:
+            sys.stderr.write(pp.warn('Failed to get %s: ' % url + str(err)))
         return False
+
+def download_json(url, data=None):
+    try:
+        return json.loads(download_data(url, data))
+    except:
+        return {}
 
 def try_url(url, data=None):
     if download_data(url, data):
@@ -207,7 +214,7 @@ def output_diff(package):
     # Find root-indent and child-indent values
     rindent, indent = guess_indent_values(before)
 
-    for remote_type, remote_id in package._remoteids_new:
+    for remote_type, remote_id in sorted(list(package._remoteids_new), reverse=True):
         after = add_remote_id_tag(after, remote_type, remote_id, indent, rindent)
     for remote_type, remote_id in package._remoteids_bad:
         after = del_remote_id_tag(after, remote_type, remote_id)
@@ -332,7 +339,7 @@ def cpan_modules_from_dist(package, dist):
         else:
             cpan_modules.append(module_name)
 
-    return cpan_modules
+    return sorted(cpan_modules)
 
 def cpan_package_name(package, uri):
     package_name = re_find_package_name(package, _cpan_package_name_re, uri)
@@ -443,7 +450,7 @@ URI_RULES = (
     (r'http://www.ctan.org/pkg/.*', 'ctan', ctan_package_name),
     (r'http://www.ctan.org/tex-archive/macros/latex/contrib/.*', 'ctan', ctan_package_name),
     # cran
-    (r'http://(?!www)(.*)\.r-project\.org/.*', 'cran', cran_package_name),
+    (r'http://cran\.r-project\.org/.*', 'cran', cran_package_name),
     # sourceforge
     (r'.*\.(sf|sourceforge)\.net', 'sourceforge', sourceforge_package_name),
     (r'.*(sf|sourceforge)\.net/projects/.*', 'sourceforge', sourceforge_package_name),
@@ -475,7 +482,13 @@ def check_pear(package, remote_id):
 def check_cpan_module(package, remote_id):
     # cpan modules that are not found by this script are probably bad, mark them bad
     # automatically
-    return False
+    return ('cpan-module', remote_id) in package._remoteids_found
+
+def check_cpan(package, remote_id):
+    data = download_json('http://search.cpan.org/api/dist/%s' % remote_id)
+    if not data or 'error' in data and data['error']:
+        return False
+    return True
 
 def check_url_fn(url):
     def func(package, remote_id):
@@ -484,11 +497,11 @@ def check_url_fn(url):
 
 CHECK_REMOTE_ID = {
     'bitbucket' :    check_url_fn('https://api.bitbucket.org/1.0/repositories/%s'),
-#    'ctan' :         check_ctan,
-    'cpan' :         check_url_fn('http://search.cpan.org/api/dist/%s'),
+    'ctan' :         check_url_fn('http://www.ctan.org/pkg/%s'),
+    'cpan' :         check_cpan,
     'cpan-module' :  check_cpan_module,
 #    'cran' :         check_cran
-    'github' :       check_url_fn('http://github.com/api/v2/json/repos/show/%s'),
+    'github' :       check_url_fn('https://api.github.com/repos/%s'),
     'gitorious' :    check_url_fn('https://gitorious.org/%s.xml'),
     'google-code' :   check_url_fn('http://code.google.com/p/%s'),
     'pear' :         check_pear,
@@ -529,6 +542,9 @@ def upstream_remote_id_package(package):
         if remote_type in CHECK_REMOTE_ID:
             if not CHECK_REMOTE_ID[remote_type](package, remote_id):
                 bad_remote_id(package, remote_id, remote_type)
+                if (remote_type, remote_id) in package._remoteids_found:
+                    sys.stderr.write(pp.error('Generated bad tag for %s: %s %s' \
+                                                  % (package, remote_type, remote_id)))
 
     if _options.diff:
         output_diff(package)
@@ -576,16 +592,18 @@ def main():
                         help='packages to check')
     parser.add_argument('-a', '--all', action='store_true',
                         help='check all packages')
+    parser.add_argument('-v', '--verbose', action='store_true',
+                        help='be verbose')
     parser.add_argument('-d', '--diff', action='store_true',
                         help='generate ebuild diff (default: print package name and message)')
-    parser.add_argument('-v', '--vanilla', action='store_true',
-                        help='Use only Vanilla remote ids defined in current /usr/portage/metadata/dtd/metadata.dtd')
+    parser.add_argument('-A', '--vanilla', action='store_true',
+                        help='use only Vanilla remote ids defined in current /usr/portage/metadata/dtd/metadata.dtd')
     parser.add_argument('-p', '--preserve', action='store_true',
-                        help='If a remote id is found with the same type, preserve the existing remote id')
+                        help='if a remote id is found with the same type, preserve the existing remote id')
     parser.add_argument('-C', '--check', action='store_true',
-                        help='Also check if existing tags are valid')
+                        help='check if existing tags are valid')
     parser.add_argument('-c', '--check-all', action='store_true',
-                        help='Also check if all tags are valid (existing and generated)')
+                        help='also check if all tags are valid (existing and generated)')
 
     args = parser.parse_args()
     _options = args
